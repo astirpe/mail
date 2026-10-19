@@ -11,8 +11,12 @@ from odoo.tools import formataddr
 
 class IrMailServer(models.Model):
     _inherit = "ir.mail_server"
-    # Clear the ormcache of _get_mail_sever when mail servers change
+    # Clear the ormcache of _get_mail_sever when mail servers are created or
+    # deleted, or when a field used by that lookup changes. Other writes, like
+    # the OAuth access token refresh of the Gmail and Outlook connectors, must
+    # not clear the caches of all workers.
     _clear_cache_name = "default"
+    _clear_cache_on_fields = ("active", "domain_whitelist", "sequence")
 
     smtp_from = fields.Char(
         string="Email From",

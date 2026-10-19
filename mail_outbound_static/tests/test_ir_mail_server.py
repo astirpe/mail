@@ -435,3 +435,86 @@ class TestIrMailServer(TransactionCase, MockSmtplibCase):
             result_message = self._send_mail(self.message)
 
         self.assertEqual(result_message["From"], full_from)
+
+    def _is_lookup_cached(self, email_domain):
+        """Return True if _get_mail_sever has a cached value for this domain"""
+        missing = object()
+        cache = self.IrMailServer._get_mail_sever.__cache__
+        value = cache.get_value(self.IrMailServer, email_domain, cache_default=missing)
+        return value is not missing
+
+    def test_14_unrelated_write_keeps_cache(self):
+        """Writing a field not used by the lookup keeps the cache."""
+        self._init_mail_server_domain_whilelist_based()
+        self.IrMailServer._get_mail_sever("domainone.com")
+        self.assertTrue(self._is_lookup_cached("domainone.com"))
+
+        self.mail_server_domainone.write(
+            {"name": "renamed server", "smtp_host": "smtp.example.com"}
+        )
+        self.assertTrue(self._is_lookup_cached("domainone.com"))
+
+        # smtp_from is used when sending, but not by the server lookup
+        self.mail_server_domainone.smtp_from = "other@domainone.com"
+        self.assertTrue(self._is_lookup_cached("domainone.com"))
+
+    def test_15_domain_whitelist_write_refreshes_lookup(self):
+        """Changing domain_whitelist clears the cache and updates the lookup."""
+        self._init_mail_server_domain_whilelist_based()
+        lookup = self.IrMailServer._get_mail_sever
+        self.assertEqual(lookup("domainfour.com"), self.mail_server_domainone.id)
+
+        self.mail_server_domaintwo.domain_whitelist = "domaintwo.com,domainfour.com"
+        self.assertFalse(self._is_lookup_cached("domainfour.com"))
+        self.assertEqual(lookup("domainfour.com"), self.mail_server_domaintwo.id)
+
+    def test_16_sequence_write_refreshes_lookup(self):
+        """Changing sequence clears the cache and updates the default server."""
+        self._init_mail_server_domain_whilelist_based()
+        lookup = self.IrMailServer._get_mail_sever
+        servers = (
+            self.mail_server_domainone
+            | self.mail_server_domaintwo
+            | self.mail_server_domainthree
+        )
+        servers.sequence = 10
+        self.mail_server_domainthree.sequence = 1
+        self.assertEqual(lookup("example.com"), self.mail_server_domainthree.id)
+
+        self.mail_server_domaintwo.sequence = 0
+        self.assertFalse(self._is_lookup_cached("example.com"))
+        self.assertEqual(lookup("example.com"), self.mail_server_domaintwo.id)
+
+    def test_17_archive_refreshes_lookup(self):
+        """Archiving a server clears the cache, so it is no longer used."""
+        self._init_mail_server_domain_whilelist_based()
+        lookup = self.IrMailServer._get_mail_sever
+        self.assertEqual(lookup("domaintwo.com"), self.mail_server_domaintwo.id)
+
+        self.mail_server_domaintwo.active = False
+        self.assertFalse(self._is_lookup_cached("domaintwo.com"))
+        self.assertNotEqual(lookup("domaintwo.com"), self.mail_server_domaintwo.id)
+
+        self.mail_server_domaintwo.active = True
+        self.assertFalse(self._is_lookup_cached("domaintwo.com"))
+        self.assertEqual(lookup("domaintwo.com"), self.mail_server_domaintwo.id)
+
+    def test_18_create_and_unlink_refresh_lookup(self):
+        """Creating or deleting a server clears the cache."""
+        self._init_mail_server_domain_whilelist_based()
+        lookup = self.IrMailServer._get_mail_sever
+        self.assertEqual(lookup("domainfive.com"), self.mail_server_domainone.id)
+
+        new_server = self.IrMailServer.create(
+            {
+                "name": "sandbox domainfive",
+                "smtp_host": "localhost",
+                "domain_whitelist": "domainfive.com",
+            }
+        )
+        self.assertFalse(self._is_lookup_cached("domainfive.com"))
+        self.assertEqual(lookup("domainfive.com"), new_server.id)
+
+        new_server.unlink()
+        self.assertFalse(self._is_lookup_cached("domainfive.com"))
+        self.assertEqual(lookup("domainfive.com"), self.mail_server_domainone.id)
