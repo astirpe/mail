@@ -11,6 +11,8 @@ from odoo.tools import formataddr
 
 class IrMailServer(models.Model):
     _inherit = "ir.mail_server"
+    # Clear the ormcache of _get_mail_sever when mail servers change
+    _clear_cache_name = "default"
 
     smtp_from = fields.Char(
         string="Email From",
@@ -60,7 +62,7 @@ class IrMailServer(models.Model):
         domain_regex = f"{domain_regex}$"
         valid_domain_name_regex = re.compile(domain_regex, re.IGNORECASE)
         domain_name = domain_name.lower().strip()
-        return True if re.match(valid_domain_name_regex, domain_name) else False
+        return bool(re.match(valid_domain_name_regex, domain_name))
 
     @api.model
     def _get_domain_whitelist(self, domain_whitelist_string):
@@ -127,15 +129,17 @@ class IrMailServer(models.Model):
         # Get proper mail server to use
         if not smtp_server and not mail_server_id:
             mail_server_id = self._get_mail_sever(email_domain)
-        self = self.with_context(
+        records = self.with_context(
             name_from=name_from,
             email_from=email_from,
             email_domain=email_domain,
             mail_server_id=mail_server_id,
         )
-        return super().send_email(message, mail_server_id, smtp_server, *args, **kwargs)
+        return super(IrMailServer, records).send_email(
+            message, mail_server_id, smtp_server, *args, **kwargs
+        )
 
-    @tools.ormcache("email_domain")
+    @api.ormcache("email_domain")
     def _get_mail_sever(self, email_domain):
         """return the mail server id that match with the domain_whitelist
         If not match then return the default mail server id available one"""
@@ -150,16 +154,3 @@ class IrMailServer(models.Model):
         if not mail_server_id:
             mail_server_id = self.sudo().search([], order="sequence", limit=1).id
         return mail_server_id
-
-    @api.model_create_multi
-    def create(self, vals_list):
-        self.env.registry.clear_cache()
-        return super().create(vals_list)
-
-    def write(self, values):
-        self.env.registry.clear_cache()
-        return super().write(values)
-
-    def unlink(self):
-        self.env.registry.clear_cache()
-        return super().unlink()

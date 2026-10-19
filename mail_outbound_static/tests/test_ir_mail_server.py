@@ -422,14 +422,16 @@ class TestIrMailServer(TransactionCase, MockSmtplibCase):
             return email, ["to@example.com"], message
 
         # Patch the method on the class so the super() call inside the module hits this
-        with patch(
-            "odoo.addons.base.models.ir_mail_server.IrMail_Server._prepare_email_message__",
-            side_effect=side_effect,
+        # send_email will capture the full context first, then call super(),
+        # which hits our side_effect, which strips the name.
+        # Then the module logic should restore it.
+        with (
+            patch(
+                "odoo.addons.base.models.ir_mail_server.IrMail_Server._prepare_email_message__",
+                side_effect=side_effect,
+            ),
+            self.mock_smtplib_connection(),
         ):
-            with self.mock_smtplib_connection():
-                # send_email will capture the full context first, then call super(),
-                # which hits our side_effect, which strips the name.
-                # Then the module logic should restore it.
-                result_message = self._send_mail(self.message)
+            result_message = self._send_mail(self.message)
 
         self.assertEqual(result_message["From"], full_from)
